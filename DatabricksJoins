@@ -1,0 +1,96 @@
+# Databricks notebook source
+spark.conf.set("fs.azure.account.auth.type.deprojectstorage.dfs.core.windows.net", "SAS")
+spark.conf.set("fs.azure.sas.token.provider.type.deprojectstorage.dfs.core.windows.net", "org.apache.hadoop.fs.azurebfs.sas.FixedSASTokenProvider")
+spark.conf.set("fs.azure.sas.fixed.token.deprojectstorage.dfs.core.windows.net", "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupyx&se=2024-02-03T06:15:00Z&st=2024-02-03T04:51:45Z&spr=https&sig=pcitmmIjt5m%2BSxz0jycv5dBy%2Bh%2BkC1Jw8tBMVrrfOPA%3D")
+
+df_CS = spark.read.csv('abfs://bronze@deprojectstorage.dfs.core.windows.net/SQLData/dbo.CustomerSatisfaction.csv' ,header = True )
+df_LP = spark.read.csv('abfs://bronze@deprojectstorage.dfs.core.windows.net/SQLData/dbo.LoyaltyProgram.csv' ,header = True )
+df_PA = spark.read.csv('abfs://bronze@deprojectstorage.dfs.core.windows.net/SQLData/dbo.Passengers.csv' ,header = True )
+
+display(df_CS)
+display(df_LP)
+display(df_PA)
+
+# COMMAND ----------
+
+# Retrieve the names and contact numbers of passengers who provided feedback.
+
+join_df = df_CS.join(df_PA, "PassengerID")
+
+output_df = join_df.select("FirstName", "LastName", "ContactNumber")
+
+output_df.show()
+
+output_path = f"abfs://bronze@deprojectstorage.dfs.core.windows.net/JoinOutput/PassengerContacts"
+
+output_df.write.parquet(output_path, mode="overwrite", compression="none")
+
+# COMMAND ----------
+
+# Retrieve the names, contact numbers, and email addresses of passengers who neither provided feedback nor are part of the loyalty program.
+
+join_df = df_PA \
+    .join(df_LP, df_PA['PassengerID'] == df_LP['PassengerID'], "left_outer") \
+    .join(df_CS, df_PA['PassengerID'] == df_CS['PassengerID'], "left_outer")
+
+output_df = join_df \
+    .select(df_PA['FirstName'], df_PA['LastName'], df_PA['ContactNumber'], df_PA['Email']) \
+    .filter((df_LP['PassengerID'].isNull()) & (df_CS['PassengerID'].isNull()))
+
+output_df.show()
+
+output_path = f"abfs://bronze@deprojectstorage.dfs.core.windows.net/JoinOutput/NoFeedback&Loyalty"
+
+output_df.write.parquet(output_path, mode="overwrite", compression="none")
+
+# COMMAND ----------
+
+join_df = df_PA.join(df_LP, "PassengerID", "right_outer")
+
+output_df = join_df.select("PassengerID")
+
+output_df.show()
+
+output_path = f"abfs://bronze@deprojectstorage.dfs.core.windows.net/JoinOutput/SampleRightJoin"
+
+output_df.write.parquet(output_path, mode="overwrite", compression="none")
+
+# COMMAND ----------
+
+# ALT Retrieve the names, contact numbers, and email addresses of passengers who neither provided feedback nor are part of the loyalty program.
+
+join1_df = df_PA.join(df_LP, "PassengerID", "left_outer")
+join2_df = join1_df.join(df_CS, "PassengerID", "left_outer")
+
+output_df = join2_df.select("FirstName", "LastName", "ContactNumber", "Email")
+output_df = output_df.filter((df_LP['PassengerID'].isNull()) & (df_CS['PassengerID'].isNull()))
+
+output_df.show()
+
+output_path = f"abfs://bronze@deprojectstorage.dfs.core.windows.net/JoinOutput/AltNoFeedback&Loyalty"
+
+output_df.write.parquet(output_path, mode="overwrite", compression="none")
+
+# COMMAND ----------
+
+# Retrieve a comprehensive list of passenger details, including information about their Loyalty Program status and Customer Satisfaction ratings. Ensure that all passengers are included in the result, regardless of whether they have Loyalty Program or Customer Satisfaction records. Filter the results to only include passengers with a Satisfaction Rating greater than 3 and exclude those with a Loyalty Status of 'Bronze'. Additionally, display the Loyalty Status as 'Not Enrolled' for passengers without Loyalty Program records.
+from pyspark.sql import functions as F
+from pyspark.sql import DataFrame
+
+join1_df = df_PA.join(df_LP, "PassengerID", "left_outer")
+join2_df = join1_df.join(df_CS, "PassengerID", "left_outer")
+
+output_df = join2_df.select(df_PA['FirstName'], df_PA['LastName'], df_PA['ContactNumber'], df_PA['Email'], F.when(df_LP['Status'].isNull(), "Not Enrolled").otherwise(df_LP['Status']).alias("LoyaltyStatus"), df_CS['SatisfactionRating'])
+
+output_df = output_df.filter((df_CS['SatisfactionRating'] > 3) & ~(output_df['LoyaltyStatus'] == "Bronze"))
+
+output_df = output_df.orderBy("PassengerID")
+
+output_df.show()
+
+output_path = f"abfs://bronze@deprojectstorage.dfs.core.windows.net/JoinOutput/TopPassengers"
+
+output_df.write.parquet(output_path, mode="overwrite", compression="none")
+
+# COMMAND ----------
+
