@@ -47,7 +47,7 @@ output_df.write.parquet(output_path, mode="overwrite", compression="none")
 
 join_df = df_PA.join(df_LP, "PassengerID", "right_outer")
 
-output_df = join_df.select("PassengerID")
+output_df = join_df.select("PassengerID", "FirstName", "LastName", "Status")
 
 output_df.show()
 
